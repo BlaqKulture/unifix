@@ -1,0 +1,422 @@
+openapi: 3.0.3
+info:
+  title: UniFix – Campus Maintenance Request System API
+  version: 1.0.0
+  description: |
+    RESTful API for submitting, assigning and tracking university maintenance requests.
+
+    **Authentication:** call `POST /api/auth/login`, copy the `access_token`, click **Authorize** and paste it.
+
+    **Roles:** `student`, `staff` (requesters), `officer` (maintenance officer), `admin` (administrator).
+
+    Demo accounts: admin@unifix.edu.ng / Admin1234 · officer1@unifix.edu.ng / Officer1234 ·
+    student@unifix.edu.ng / Student1234 · staff@unifix.edu.ng / Staff1234
+servers:
+  - url: /
+tags:
+  - name: Auth
+  - name: Users
+  - name: Categories
+  - name: Service Requests
+  - name: Workflow
+  - name: Attachments
+  - name: Notifications
+  - name: Reports
+  - name: Audit
+  - name: System
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: {type: string, example: Validation failed}
+        details: {type: object, example: {email: Enter a valid email address.}}
+    User:
+      type: object
+      properties:
+        id: {type: integer}
+        full_name: {type: string}
+        email: {type: string}
+        phone: {type: string}
+        department: {type: string}
+        role: {type: string, enum: [student, staff, officer, admin]}
+        is_active: {type: boolean}
+        created_at: {type: string, format: date-time}
+    Category:
+      type: object
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        description: {type: string}
+        is_active: {type: boolean}
+    ServiceRequest:
+      type: object
+      properties:
+        id: {type: integer}
+        reference: {type: string, example: SR-2026-00012}
+        title: {type: string}
+        description: {type: string}
+        location: {type: string}
+        priority: {type: string, enum: [low, medium, high, urgent]}
+        status: {type: string, enum: [pending, assigned, in_progress, on_hold, completed, cancelled]}
+        category: {$ref: '#/components/schemas/Category'}
+        requester: {type: object}
+        assigned_officer: {type: object, nullable: true}
+        attachment_count: {type: integer}
+        created_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time, nullable: true}
+        logs: {type: array, items: {type: object}, description: Only on detail endpoints}
+        attachments: {type: array, items: {type: object}, description: Only on detail endpoints}
+    Page:
+      type: object
+      properties:
+        items: {type: array, items: {type: object}}
+        page: {type: integer}
+        per_page: {type: integer}
+        total: {type: integer}
+        pages: {type: integer}
+  parameters:
+    page: {name: page, in: query, schema: {type: integer, default: 1}}
+    per_page: {name: per_page, in: query, schema: {type: integer, default: 10, maximum: 100}}
+    id: {name: id, in: path, required: true, schema: {type: integer}}
+  responses:
+    Unauthorized: {description: Missing, expired or revoked token, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    Forbidden: {description: Role not allowed, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    NotFound: {description: Not found, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    Invalid: {description: Validation failed, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+security:
+  - bearerAuth: []
+paths:
+  /api/health:
+    get:
+      tags: [System]
+      summary: Health check (confirms database connection)
+      security: []
+      responses: {'200': {description: API and database status}}
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a student or staff account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name, email, password]
+              properties:
+                full_name: {type: string, example: Ada Lovelace}
+                email: {type: string, example: ada@unifix.edu.ng}
+                password: {type: string, example: Secret123}
+                role: {type: string, enum: [student, staff], default: student}
+                phone: {type: string}
+                department: {type: string}
+      responses:
+        '201': {description: Account created, returns user and access_token}
+        '409': {description: Email already registered}
+        '422': {$ref: '#/components/responses/Invalid'}
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in and receive a JWT access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: {type: string, example: admin@unifix.edu.ng}
+                password: {type: string, example: Admin1234}
+      responses:
+        '200': {description: Login successful, returns user and access_token}
+        '401': {description: Invalid email or password}
+        '403': {description: Account deactivated}
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke the current token
+      responses: {'200': {description: Logged out}, '401': {$ref: '#/components/responses/Unauthorized'}}
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user profile
+      responses: {'200': {description: The logged-in user}, '401': {$ref: '#/components/responses/Unauthorized'}}
+    put:
+      tags: [Auth]
+      summary: Update own profile or change password
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name: {type: string}
+                phone: {type: string}
+                department: {type: string}
+                current_password: {type: string}
+                new_password: {type: string}
+      responses: {'200': {description: Updated}, '422': {$ref: '#/components/responses/Invalid'}}
+  /api/roles:
+    get:
+      tags: [Users]
+      summary: List roles
+      security: []
+      responses: {'200': {description: Role list}}
+  /api/users:
+    get:
+      tags: [Users]
+      summary: List users (admin)
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+        - {name: q, in: query, schema: {type: string}, description: Search name, email, department}
+        - {name: role, in: query, schema: {type: string, enum: [student, staff, officer, admin]}}
+        - {name: is_active, in: query, schema: {type: string, enum: ['true', 'false']}}
+      responses: {'200': {description: Paginated users, content: {application/json: {schema: {$ref: '#/components/schemas/Page'}}}}, '403': {$ref: '#/components/responses/Forbidden'}}
+    post:
+      tags: [Users]
+      summary: Create a user of any role (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name, email, password, role]
+              properties:
+                full_name: {type: string}
+                email: {type: string}
+                password: {type: string}
+                role: {type: string, enum: [student, staff, officer, admin]}
+                phone: {type: string}
+                department: {type: string}
+      responses: {'201': {description: Created}, '409': {description: Email exists}, '422': {$ref: '#/components/responses/Invalid'}}
+  /api/users/{id}:
+    get:
+      tags: [Users]
+      summary: Get one user (admin)
+      parameters: [{$ref: '#/components/parameters/id'}]
+      responses: {'200': {description: User}, '404': {$ref: '#/components/responses/NotFound'}}
+    patch:
+      tags: [Users]
+      summary: Update role, status or details (admin)
+      parameters: [{$ref: '#/components/parameters/id'}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: {type: string, enum: [student, staff, officer, admin]}
+                is_active: {type: boolean}
+                full_name: {type: string}
+                department: {type: string}
+      responses: {'200': {description: Updated}}
+  /api/officers:
+    get:
+      tags: [Users]
+      summary: Active officers with open workload (admin)
+      responses: {'200': {description: Officer list with open_jobs count}}
+  /api/categories:
+    get:
+      tags: [Categories]
+      summary: List request categories
+      parameters: [{name: include_inactive, in: query, schema: {type: string, enum: ['true']}}]
+      responses: {'200': {description: Category list}}
+    post:
+      tags: [Categories]
+      summary: Create a category (admin)
+      requestBody:
+        content:
+          application/json:
+            schema: {type: object, required: [name], properties: {name: {type: string}, description: {type: string}}}
+      responses: {'201': {description: Created}}
+  /api/categories/{id}:
+    patch:
+      tags: [Categories]
+      summary: Update or deactivate a category (admin)
+      parameters: [{$ref: '#/components/parameters/id'}]
+      requestBody:
+        content:
+          application/json:
+            schema: {type: object, properties: {name: {type: string}, description: {type: string}, is_active: {type: boolean}}}
+      responses: {'200': {description: Updated}}
+    delete:
+      tags: [Categories]
+      summary: Delete an unused category (admin)
+      parameters: [{$ref: '#/components/parameters/id'}]
+      responses: {'200': {description: Deleted}, '409': {description: Category in use}}
+  /api/requests:
+    get:
+      tags: [Service Requests]
+      summary: List requests (scoped by role) with search, filter, sort and pagination
+      description: Students/staff see their own requests, officers see requests assigned to them, admins see all.
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+        - {name: q, in: query, schema: {type: string}, description: Search title, description, reference, location}
+        - {name: status, in: query, schema: {type: string}, description: 'One or more, comma separated, e.g. pending,assigned'}
+        - {name: priority, in: query, schema: {type: string, enum: [low, medium, high, urgent]}}
+        - {name: category_id, in: query, schema: {type: integer}}
+        - {name: officer_id, in: query, schema: {type: integer}, description: Admin only}
+        - {name: date_from, in: query, schema: {type: string, format: date}}
+        - {name: date_to, in: query, schema: {type: string, format: date}}
+        - {name: sort, in: query, schema: {type: string, enum: [newest, oldest, priority]}}
+      responses: {'200': {description: Paginated requests, content: {application/json: {schema: {$ref: '#/components/schemas/Page'}}}}}
+    post:
+      tags: [Service Requests]
+      summary: Submit a new service request (student/staff)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, description, location, category_id]
+              properties:
+                title: {type: string, example: Leaking pipe in washroom}
+                description: {type: string, example: Water has been leaking under the sink for two days.}
+                location: {type: string, example: Hall 1, 2nd floor}
+                category_id: {type: integer, example: 2}
+                priority: {type: string, enum: [low, medium, high, urgent], default: medium}
+      responses:
+        '201': {description: Created, content: {application/json: {schema: {type: object, properties: {request: {$ref: '#/components/schemas/ServiceRequest'}}}}}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/Invalid'}
+  /api/requests/stats:
+    get:
+      tags: [Service Requests]
+      summary: Status counts for the current user's dashboard
+      responses: {'200': {description: total, open and by_status counts}}
+  /api/requests/{id}:
+    get:
+      tags: [Service Requests]
+      summary: Request details with status history, assignments and attachments
+      parameters: [{$ref: '#/components/parameters/id'}]
+      responses: {'200': {description: Request detail}, '404': {$ref: '#/components/responses/NotFound'}}
+    patch:
+      tags: [Service Requests]
+      summary: Edit a request (requester while pending, or admin)
+      parameters: [{$ref: '#/components/parameters/id'}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: {type: string}
+                description: {type: string}
+                location: {type: string}
+                category_id: {type: integer}
+                priority: {type: string, enum: [low, medium, high, urgent]}
+      responses: {'200': {description: Updated}, '409': {description: No longer editable}}
+    delete:
+      tags: [Service Requests]
+      summary: Delete a request (admin)
+      parameters: [{$ref: '#/components/parameters/id'}]
+      responses: {'200': {description: Deleted}}
+  /api/requests/{id}/assign:
+    post:
+      tags: [Workflow]
+      summary: Assign or reassign a request to a maintenance officer (admin)
+      parameters: [{$ref: '#/components/parameters/id'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [officer_id], properties: {officer_id: {type: integer}, note: {type: string}}}
+      responses: {'200': {description: Assigned; officer and requester notified}, '409': {description: Closed or already assigned}}
+  /api/requests/{id}/status:
+    post:
+      tags: [Workflow]
+      summary: Change request status
+      description: |
+        Officer: assigned → in_progress → on_hold ↔ in_progress → completed.
+        Requester: pending → cancelled. Admin: any status except assigned (use /assign).
+        A comment is required for on_hold and cancelled.
+      parameters: [{$ref: '#/components/parameters/id'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: {type: string, enum: [pending, in_progress, on_hold, completed, cancelled]}
+                comment: {type: string}
+      responses: {'200': {description: Updated and logged}, '403': {$ref: '#/components/responses/Forbidden'}, '409': {description: Transition not allowed}}
+  /api/requests/{id}/attachments:
+    post:
+      tags: [Attachments]
+      summary: Upload evidence photos (max 5 per request, 3 MB each)
+      parameters: [{$ref: '#/components/parameters/id'}]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files: {type: array, items: {type: string, format: binary}}
+      responses: {'201': {description: Uploaded}, '422': {$ref: '#/components/responses/Invalid'}}
+  /api/attachments/{id}:
+    get:
+      tags: [Attachments]
+      summary: Download an evidence photo
+      parameters: [{$ref: '#/components/parameters/id'}]
+      responses: {'200': {description: Image bytes}, '404': {$ref: '#/components/responses/NotFound'}}
+  /api/notifications:
+    get:
+      tags: [Notifications]
+      summary: My in-app notifications
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - {name: unread, in: query, schema: {type: string, enum: ['true']}}
+      responses: {'200': {description: Paginated notifications plus unread_count}}
+  /api/notifications/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark one notification as read
+      parameters: [{$ref: '#/components/parameters/id'}]
+      responses: {'200': {description: OK}}
+  /api/notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all my notifications as read
+      responses: {'200': {description: OK}}
+  /api/reports/summary:
+    get:
+      tags: [Reports]
+      summary: Dashboard statistics (admin)
+      responses: {'200': {description: Counts by status, priority, category, officer performance, daily volume}}
+  /api/reports/export:
+    get:
+      tags: [Reports]
+      summary: Export requests to CSV or PDF (admin)
+      description: Accepts the same filters as GET /api/requests.
+      parameters:
+        - {name: format, in: query, required: true, schema: {type: string, enum: [csv, pdf]}}
+        - {name: status, in: query, schema: {type: string}}
+        - {name: category_id, in: query, schema: {type: integer}}
+        - {name: date_from, in: query, schema: {type: string, format: date}}
+        - {name: date_to, in: query, schema: {type: string, format: date}}
+      responses: {'200': {description: File download}}
+  /api/audit-logs:
+    get:
+      tags: [Audit]
+      summary: Activity log of all important actions (admin)
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+        - {name: action, in: query, schema: {type: string}, description: 'Prefix, e.g. request. or auth.'}
+        - {name: q, in: query, schema: {type: string}}
+      responses: {'200': {description: Paginated audit entries}}

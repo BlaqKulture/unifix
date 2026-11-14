@@ -1,0 +1,23 @@
+# Render Blueprint: deploys the Flask API as a free web service.
+# The PostgreSQL database is hosted on Neon (free, does not expire);
+# paste its connection string into DATABASE_URL when Render asks.
+services:
+  - type: web
+    name: unifix-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 2 -b 0.0.0.0:$PORT wsgi:app
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: SECRET_KEY
+        generateValue: true
+      - key: AUTO_SEED
+        value: "true"
